@@ -1,0 +1,39 @@
+{
+  "name": "sohel-gadgets-server",
+  "version": "1.0.0",
+  "description": "Backend API for Sohel Gadgets inventory management (Express + MongoDB).",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "nodemon src/index.js",
+    "start": "node src/index.js",
+    "seed": "node seed.js",
+    "docker-start": "node -e \"try { require('./seed.js'); console.log('Seed completed'); } catch(err) { console.error('Seed failed:', err); process.exit(1); }\" && node src/index.js"
+  },
+  "keywords": [
+    "express",
+    "mongodb",
+    "inventory",
+    "sohel-gadgets"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.13.5",
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.6",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.3.2",
+    "morgan": "^1.10.0",
+    "multer": "^2.0.2",
+    "nodemailer": "^8.0.1",
+    "pdfkit": "^0.15.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
