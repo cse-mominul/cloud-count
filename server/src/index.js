@@ -1,12 +1,30 @@
-require("dotenv").config({ path: '.env.local' });
-if (!process.env.MONGODB_URI) {
-  require("dotenv").config();
+const fs = require("fs");
+const path = require("path");
+const dotenv = require("dotenv");
+
+// Load env files at startup (priority: server/.env.local -> server/.env -> root/.env)
+const envCandidates = [
+  path.resolve(__dirname, "../.env.local"),
+  path.resolve(__dirname, "../.env"),
+  path.resolve(__dirname, "../../.env")
+];
+
+for (const envPath of envCandidates) {
+  if (fs.existsSync(envPath)) {
+    dotenv.config({ path: envPath, override: false });
+  }
 }
+
+const maskedEmailPass = process.env.EMAIL_PASS
+  ? `${"*".repeat(Math.max(process.env.EMAIL_PASS.length - 2, 0))}${process.env.EMAIL_PASS.slice(-2)}`
+  : "MISSING";
+console.log(`[env] EMAIL_USER: ${process.env.EMAIL_USER || "MISSING"}`);
+console.log(`[env] EMAIL_PASS: ${process.env.EMAIL_PASS ? `SET (${maskedEmailPass})` : "MISSING"}`);
+
 const express = require("express");
 const cors = require("cors");
 const morgan = require("morgan");
 const cookieParser = require("cookie-parser");
-const path = require("path");
 const connectDB = require("./config/db");
 
 const authRoutes = require("./routes/auth");
@@ -40,6 +58,7 @@ app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 // Routes
 app.use("/api/auth", authRoutes);
+app.use("/api", authRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/customers", customerRoutes);
 app.use("/api/invoices", invoiceRoutes);

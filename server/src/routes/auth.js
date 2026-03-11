@@ -9,6 +9,29 @@ const { auth } = require("../middleware/auth");
 
 const router = express.Router();
 
+const createPasswordResetTransporter = () => {
+  const { EMAIL_USER, EMAIL_PASS } = process.env;
+  const missingVars = ["EMAIL_USER", "EMAIL_PASS"].filter((key) => !process.env[key]);
+
+  if (missingVars.length > 0) {
+    return {
+      ok: false,
+      message: `Email service is not configured. Missing: ${missingVars.join(", ")}`
+    };
+  }
+
+  return {
+    ok: true,
+    transporter: nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: EMAIL_USER,
+        pass: EMAIL_PASS
+      }
+    })
+  };
+};
+
 // Login
 router.post("/login", async (req, res) => {
   try {
@@ -91,18 +114,10 @@ router.post("/forgot-password", async (req, res) => {
       resetOtpExpire: otpExpire
     });
 
-    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-      return res.status(500).json({ message: "Email service is not configured" });
+    const transportResult = createPasswordResetTransporter();
+    if (!transportResult.ok) {
+      return res.status(500).json({ message: transportResult.message });
     }
-
-    // Send email
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      }
-    });
 
     const mailOptions = {
       from: process.env.EMAIL_USER,
@@ -127,7 +142,7 @@ router.post("/forgot-password", async (req, res) => {
       `
     };
 
-    await transporter.sendMail(mailOptions);
+    await transportResult.transporter.sendMail(mailOptions);
 
     return res.json({ message: "If an account with that email exists, a password reset OTP has been sent." });
   } catch (err) {
