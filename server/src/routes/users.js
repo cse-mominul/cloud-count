@@ -3,6 +3,7 @@ const bcrypt = require("bcryptjs");
 const User = require("../models/User");
 const Activity = require("../models/Activity");
 const { auth } = require("../middleware/auth");
+const { resolveVendorContext, vendorFilter } = require("../middleware/vendorContext");
 
 const router = express.Router();
 
@@ -15,9 +16,9 @@ const requireAdmin = (req, res, next) => {
 };
 
 // Get all users (admin/super_admin only)
-router.get("/", auth, requireAdmin, async (req, res) => {
+router.get("/", auth, resolveVendorContext, requireAdmin, async (req, res) => {
   try {
-    const users = await User.find().select("-passwordHash").sort({ createdAt: -1 });
+    const users = await User.find(vendorFilter(req)).select("-passwordHash").sort({ createdAt: -1 });
     return res.json({ users });
   } catch (err) {
     console.error("Failed to fetch users:", err);
@@ -26,9 +27,9 @@ router.get("/", auth, requireAdmin, async (req, res) => {
 });
 
 // Create new user (admin/super_admin only)
-router.post("/", auth, requireAdmin, async (req, res) => {
+router.post("/", auth, resolveVendorContext, requireAdmin, async (req, res) => {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, email, password, role, vendorId: requestedVendorId } = req.body;
 
     if (!name || !email || !password || !role) {
       return res.status(400).json({ message: "Name, email, password, and role are required" });
@@ -46,7 +47,15 @@ router.post("/", auth, requireAdmin, async (req, res) => {
     }
 
     // Check if user already exists
-    const existingUser = await User.findOne({ email });
+    const targetVendorId = req.user.role === "super_admin"
+      ? (requestedVendorId || req.vendorId || null)
+      : req.vendorId;
+
+    if (req.user.role !== "super_admin" && !targetVendorId) {
+      return res.status(400).json({ message: "Vendor context is required to create user" });
+    }
+
+    const existingUser = await User.findOne({ email, vendorId: targetVendorId });
     if (existingUser) {
       return res.status(400).json({ message: "User with this email already exists" });
     }
@@ -54,6 +63,7 @@ router.post("/", auth, requireAdmin, async (req, res) => {
     const passwordHash = await bcrypt.hash(password, 10);
 
     const user = await User.create({
+      vendorId: targetVendorId,
       name,
       email,
       passwordHash,
@@ -84,6 +94,7 @@ router.post("/", auth, requireAdmin, async (req, res) => {
       message: "User created successfully",
       user: {
         id: user._id,
+        vendorId: user.vendorId,
         name: user.name,
         email: user.email,
         role: user.role,
@@ -97,12 +108,12 @@ router.post("/", auth, requireAdmin, async (req, res) => {
 });
 
 // Update user (admin/super_admin only)
-router.put("/:id", auth, requireAdmin, async (req, res) => {
+router.put("/:id", auth, resolveVendorContext, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { email, password, role } = req.body;
 
-    const user = await User.findById(id);
+    const user = await User.findOne(vendorFilter(req, { _id: id }));
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
@@ -128,7 +139,7 @@ router.put("/:id", auth, requireAdmin, async (req, res) => {
     
     if (email) {
       // Check if email is already taken by another user
-      const existingUser = await User.findOne({ email, _id: { $ne: id } });
+      const existingUser = await User.findOne(vendorFilter(req, { email, _id: { $ne: id } }));
       if (existingUser) {
         return res.status(400).json({ message: "Email is already in use by another user" });
       }
@@ -147,8 +158,8 @@ router.put("/:id", auth, requireAdmin, async (req, res) => {
       updateData.role = role;
     }
 
-    const updatedUser = await User.findByIdAndUpdate(
-      id,
+    const updatedUser = await User.findOneAndUpdate(
+      vendorFilter(req, { _id: id }),
       updateData,
       { new: true }
     ).select("-passwordHash");
@@ -185,7 +196,7 @@ router.put("/:id", auth, requireAdmin, async (req, res) => {
 });
 
 // Delete user (admin/super_admin only)
-router.delete("/:id", auth, requireAdmin, async (req, res) => {
+router.delete("/:id", auth, resolveVendorContext, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -193,7 +204,7 @@ router.delete("/:id", auth, requireAdmin, async (req, res) => {
       return res.status(400).json({ message: "Cannot delete your own account" });
     }
 
-    const user = await User.findById(id);
+    const user = await User.findOne(vendorFilter(req, { _id: id }));
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
@@ -211,7 +222,7 @@ router.delete("/:id", auth, requireAdmin, async (req, res) => {
       role: user.role
     };
 
-    await User.findByIdAndDelete(id);
+    await User.findOneAndDelete(vendorFilter(req, { _id: id }));
 
     // Log activity for user deletion
     await Activity.logActivity({

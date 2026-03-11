@@ -6,15 +6,16 @@ const Activity = require("../models/Activity");
 const Settings = require("../models/Settings");
 const { sendEventNotification } = require("../utils/telegramNotifications");
 const { auth, requireRole, isAdmin } = require("../middleware/auth");
+const { resolveVendorContext, vendorFilter } = require("../middleware/vendorContext");
 
 const router = express.Router();
 
 const SERIAL_CATEGORIES = ["Mobile", "Electronics"];
 
 // Get all products
-router.get("/", auth, async (req, res) => {
+router.get("/", auth, resolveVendorContext, async (req, res) => {
   try {
-    const products = await Product.find().sort({ createdAt: -1 });
+    const products = await Product.find(vendorFilter(req)).sort({ createdAt: -1 });
     return res.json(products);
   } catch (err) {
     console.error(err);
@@ -23,16 +24,18 @@ router.get("/", auth, async (req, res) => {
 });
 
 // NEW: Product suggestions for auto-complete
-router.get("/suggestions", auth, async (req, res) => {
+router.get("/suggestions", auth, resolveVendorContext, async (req, res) => {
   try {
     const { q } = req.query;
     if (!q) return res.json([]);
-    const suggestions = await Product.find({
-      $or: [
-        { name: { $regex: q, $options: "i" } },
-        { sku: { $regex: q, $options: "i" } }
-      ]
-    })
+    const suggestions = await Product.find(
+      vendorFilter(req, {
+        $or: [
+          { name: { $regex: q, $options: "i" } },
+          { sku: { $regex: q, $options: "i" } }
+        ]
+      })
+    )
     .limit(5)
     .select("name category costPrice salePrice sku lowStockThreshold");
     return res.json(suggestions);
@@ -42,8 +45,12 @@ router.get("/suggestions", auth, async (req, res) => {
 });
 
 // Create product (admin, super_admin, manager only) - Staff cannot create
-router.post("/", auth, requireRole("admin", "super_admin", "manager"), async (req, res) => {
+router.post("/", auth, resolveVendorContext, requireRole("admin", "super_admin", "manager"), async (req, res) => {
   try {
+    if (!req.vendorId) {
+      return res.status(400).json({ message: "Vendor context is required to create products" });
+    }
+
     const {
       name,
       sku,
@@ -91,6 +98,7 @@ router.post("/", auth, requireRole("admin", "super_admin", "manager"), async (re
     }
 
     const product = await Product.create({
+      vendorId: req.vendorId,
       name,
       sku,
       category,
@@ -130,11 +138,11 @@ router.post("/", auth, requireRole("admin", "super_admin", "manager"), async (re
 });
 
 // Update product (admin, super_admin, manager only) - Staff cannot update
-router.put("/:id", auth, requireRole("admin", "super_admin", "manager"), async (req, res) => {
+router.put("/:id", auth, resolveVendorContext, requireRole("admin", "super_admin", "manager"), async (req, res) => {
   try {
     const { id } = req.params;
     const updates = req.body;
-    const product = await Product.findById(id);
+    const product = await Product.findOne(vendorFilter(req, { _id: id }));
     if (!product) {
       return res.status(404).json({ message: "Product not found" });
     }
@@ -235,15 +243,15 @@ router.put("/:id", auth, requireRole("admin", "super_admin", "manager"), async (
 });
 
 // Product history (stock logs from invoices)
-router.get("/:id/history", auth, async (req, res) => {
+router.get("/:id/history", auth, resolveVendorContext, async (req, res) => {
   try {
     const { id } = req.params;
-    const product = await Product.findById(id);
+    const product = await Product.findOne(vendorFilter(req, { _id: id }));
     if (!product) {
       return res.status(404).json({ message: "Product not found" });
     }
 
-    const invoices = await Invoice.find({ "items.product": id })
+    const invoices = await Invoice.find(vendorFilter(req, { "items.product": id }))
       .sort({ issuedAt: -1 })
       .lean();
 
@@ -270,10 +278,10 @@ router.get("/:id/history", auth, async (req, res) => {
 });
 
 // Delete product (admin, super_admin only) - Manager and Staff cannot delete
-router.delete("/:id", auth, isAdmin, async (req, res) => {
+router.delete("/:id", auth, resolveVendorContext, isAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const product = await Product.findByIdAndDelete(id);
+    const product = await Product.findOneAndDelete(vendorFilter(req, { _id: id }));
     if (!product) {
       return res.status(404).json({ message: "Product not found" });
     }
@@ -304,10 +312,10 @@ router.delete("/:id", auth, isAdmin, async (req, res) => {
 });
 
 // Get stock logs for a product
-router.get("/:id/logs", auth, async (req, res) => {
+router.get("/:id/logs", auth, resolveVendorContext, async (req, res) => {
   try {
     const { id } = req.params;
-    const product = await Product.findById(id);
+    const product = await Product.findOne(vendorFilter(req, { _id: id }));
     if (!product) {
       return res.status(404).json({ message: "Product not found" });
     }

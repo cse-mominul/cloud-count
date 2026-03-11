@@ -4,14 +4,15 @@ const Invoice = require("../models/Invoice");
 const Payment = require("../models/Payment");
 const Activity = require("../models/Activity");
 const { auth, requireRole } = require("../middleware/auth");
+const { resolveVendorContext, vendorFilter } = require("../middleware/vendorContext");
 
 const router = express.Router();
 
 // List customers with optional search
-router.get("/", auth, async (req, res) => {
+router.get("/", auth, resolveVendorContext, async (req, res) => {
   try {
     const { search } = req.query;
-    const filter = {};
+    const filter = vendorFilter(req, {});
 
     if (search && search.trim().length > 0) {
       const regex = new RegExp(search.trim(), "i");
@@ -32,9 +33,13 @@ router.get("/", auth, async (req, res) => {
 });
 
 // Create customer - Manager+ can create, Staff can only view
-router.post("/", auth, requireRole("admin", "super_admin", "manager"), async (req, res) => {
+router.post("/", auth, resolveVendorContext, requireRole("admin", "super_admin", "manager"), async (req, res) => {
   try {
     console.log("Customer creation request body:", req.body);
+
+    if (!req.vendorId) {
+      return res.status(400).json({ message: "Vendor context is required to create customers" });
+    }
     
     const { name, email, phone, address } = req.body;
     
@@ -46,10 +51,10 @@ router.post("/", auth, requireRole("admin", "super_admin", "manager"), async (re
     // Check for existing customer by email or phone
     let existingCustomer = null;
     if (email) {
-      existingCustomer = await Customer.findOne({ email: email.trim() });
+      existingCustomer = await Customer.findOne(vendorFilter(req, { email: email.trim() }));
     }
     if (!existingCustomer && phone) {
-      existingCustomer = await Customer.findOne({ phone: phone.trim() });
+      existingCustomer = await Customer.findOne(vendorFilter(req, { phone: phone.trim() }));
     }
 
     if (existingCustomer) {
@@ -60,13 +65,14 @@ router.post("/", auth, requireRole("admin", "super_admin", "manager"), async (re
     }
 
     // Generate auto-incrementing customerId
-    const count = await Customer.countDocuments();
+    const count = await Customer.countDocuments(vendorFilter(req, {}));
     const newId = `SG-${1001 + count}`;
     console.log("Generated customerId:", newId, "based on count:", count);
 
     // Create new customer with generated ID
     const customerData = {
       customerId: newId,
+      vendorId: req.vendorId,
       name: name.trim(),
       email: email?.trim() || undefined,
       phone: phone?.trim() || undefined,
@@ -137,7 +143,7 @@ router.post("/", auth, requireRole("admin", "super_admin", "manager"), async (re
 });
 
 // Update customer - PUT method for full update
-router.put("/:id", auth, requireRole("admin", "super_admin", "manager"), async (req, res) => {
+router.put("/:id", auth, resolveVendorContext, requireRole("admin", "super_admin", "manager"), async (req, res) => {
   try {
     console.log("Customer update request:", req.params.id, req.body);
     
@@ -148,7 +154,7 @@ router.put("/:id", auth, requireRole("admin", "super_admin", "manager"), async (
       return res.status(400).json({ message: "Name is required" });
     }
     
-    const customer = await Customer.findById(id);
+    const customer = await Customer.findOne(vendorFilter(req, { _id: id }));
     if (!customer) {
       return res.status(404).json({ message: "Customer not found" });
     }
@@ -158,20 +164,20 @@ router.put("/:id", auth, requireRole("admin", "super_admin", "manager"), async (
     
     // Check for duplicate email/phone (excluding current customer)
     if (email && email !== customer.email) {
-      const emailExists = await Customer.findOne({ 
+      const emailExists = await Customer.findOne(vendorFilter(req, { 
         email: email.trim(), 
         _id: { $ne: id } 
-      });
+      }));
       if (emailExists) {
         return res.status(409).json({ message: "Email already exists" });
       }
     }
     
     if (phone && phone !== customer.phone) {
-      const phoneExists = await Customer.findOne({ 
+      const phoneExists = await Customer.findOne(vendorFilter(req, { 
         phone: phone.trim(), 
         _id: { $ne: id } 
-      });
+      }));
       if (phoneExists) {
         return res.status(409).json({ message: "Phone already exists" });
       }
@@ -232,7 +238,7 @@ router.put("/:id", auth, requireRole("admin", "super_admin", "manager"), async (
 });
 
 // Receive payment (FIFO invoice deduction by invoice ID)
-router.post("/:id/payment", auth, requireRole("admin", "super_admin", "manager"), async (req, res) => {
+router.post("/:id/payment", auth, resolveVendorContext, requireRole("admin", "super_admin", "manager"), async (req, res) => {
   try {
     const { id } = req.params;
     const { amount } = req.body;
@@ -242,16 +248,16 @@ router.post("/:id/payment", auth, requireRole("admin", "super_admin", "manager")
       return res.status(400).json({ message: "Amount must be a positive number" });
     }
     
-    const customer = await Customer.findById(id);
+    const customer = await Customer.findOne(vendorFilter(req, { _id: id }));
     if (!customer) {
       return res.status(404).json({ message: "Customer not found" });
     }
     
     // Fetch invoices with due amount, sorted by createdAt (oldest first) for FIFO
-    const invoicesWithDue = await Invoice.find({
+    const invoicesWithDue = await Invoice.find(vendorFilter(req, {
       customer: id,
       dueAmount: { $gt: 0 }
-    }).sort({ createdAt: 1 }).lean();
+    })).sort({ createdAt: 1 }).lean();
     
     // Deduct payment from invoices (FIFO)
     let remainingPayment = amt;
@@ -266,8 +272,8 @@ router.post("/:id/payment", auth, requireRole("admin", "super_admin", "manager")
       const newStatus = newDueAmount === 0 ? 'paid' : invoice.status === 'unpaid' ? 'partial' : invoice.status;
       
       // Update invoice with new due amount and status
-      await Invoice.findByIdAndUpdate(
-        invoice._id,
+      await Invoice.findOneAndUpdate(
+        vendorFilter(req, { _id: invoice._id }),
         {
           dueAmount: newDueAmount,
           paidAmount: (invoice.paidAmount || 0) + deductAmount,
@@ -287,6 +293,7 @@ router.post("/:id/payment", auth, requireRole("admin", "super_admin", "manager")
     
     // Create payment record
     const payment = await Payment.create({
+      vendorId: req.vendorId,
       customer: id,
       amount: amt,
       note: req.body.note?.trim()
@@ -339,17 +346,17 @@ router.post("/:id/payment", auth, requireRole("admin", "super_admin", "manager")
 });
 
 // Customer history with invoices and payments
-router.get("/:id/history", auth, async (req, res) => {
+router.get("/:id/history", auth, resolveVendorContext, async (req, res) => {
   try {
     const { id } = req.params;
-    const customer = await Customer.findById(id);
+    const customer = await Customer.findOne(vendorFilter(req, { _id: id }));
     if (!customer) {
       return res.status(404).json({ message: "Customer not found" });
     }
 
     const [invoices, payments] = await Promise.all([
-      Invoice.find({ customer: id }).sort({ issuedAt: -1 }).lean(),
-      Payment.find({ customer: id }).sort({ createdAt: -1 }).lean()
+      Invoice.find(vendorFilter(req, { customer: id })).sort({ issuedAt: -1 }).lean(),
+      Payment.find(vendorFilter(req, { customer: id })).sort({ createdAt: -1 }).lean()
     ]);
 
     return res.json({
@@ -364,10 +371,10 @@ router.get("/:id/history", auth, async (req, res) => {
 });
 
 // Delete customer - Super Admin only
-router.delete("/:id", auth, requireRole("super_admin"), async (req, res) => {
+router.delete("/:id", auth, resolveVendorContext, requireRole("super_admin"), async (req, res) => {
   try {
     const { id } = req.params;
-    const customer = await Customer.findById(id);
+    const customer = await Customer.findOne(vendorFilter(req, { _id: id }));
     
     if (!customer) {
       return res.status(404).json({ message: "Customer not found" });
@@ -375,7 +382,7 @@ router.delete("/:id", auth, requireRole("super_admin"), async (req, res) => {
 
     // Check if customer has any invoices
     const Invoice = require("../models/Invoice");
-    const invoiceCount = await Invoice.countDocuments({ customer: id });
+    const invoiceCount = await Invoice.countDocuments(vendorFilter(req, { customer: id }));
     
     if (invoiceCount > 0) {
       return res.status(400).json({ 
@@ -403,7 +410,7 @@ router.delete("/:id", auth, requireRole("super_admin"), async (req, res) => {
       severity: 'high'
     });
 
-    await Customer.findByIdAndDelete(id);
+    await Customer.findOneAndDelete(vendorFilter(req, { _id: id }));
     
     return res.json({
       message: "Customer deleted successfully",
@@ -420,15 +427,17 @@ router.delete("/:id", auth, requireRole("super_admin"), async (req, res) => {
 });
 
 // Migrate existing customers to add customerId (Super Admin only)
-router.post("/migrate-ids", auth, requireRole("super_admin"), async (req, res) => {
+router.post("/migrate-ids", auth, resolveVendorContext, requireRole("super_admin"), async (req, res) => {
   try {
     // Find all customers without customerId
-    const customersWithoutId = await Customer.find({ 
-      $or: [
-        { customerId: { $exists: false } },
-        { customerId: { $in: [null, "", " "] } }
-      ]
-    });
+    const customersWithoutId = await Customer.find(
+      vendorFilter(req, {
+        $or: [
+          { customerId: { $exists: false } },
+          { customerId: { $in: [null, "", " "] } }
+        ]
+      })
+    );
 
     if (customersWithoutId.length === 0) {
       return res.json({
@@ -441,7 +450,7 @@ router.post("/migrate-ids", auth, requireRole("super_admin"), async (req, res) =
     
     // Generate and assign customer IDs
     for (const customer of customersWithoutId) {
-      const newCustomerId = await Customer.generateCustomerId();
+      const newCustomerId = await Customer.generateCustomerId(customer.vendorId);
       customer.customerId = newCustomerId;
       await customer.save();
       migratedCount++;

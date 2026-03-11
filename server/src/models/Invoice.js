@@ -41,6 +41,11 @@ const invoiceItemSchema = new mongoose.Schema(
 
 const invoiceSchema = new mongoose.Schema(
   {
+    vendorId: {
+      type: mongoose.Schema.Types.ObjectId,
+      required: true,
+      index: true
+    },
     customer: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Customer",

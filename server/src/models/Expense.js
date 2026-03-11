@@ -1,6 +1,11 @@
 const mongoose = require('mongoose');
 
 const expenseSchema = new mongoose.Schema({
+  vendorId: {
+    type: mongoose.Schema.Types.ObjectId,
+    required: true,
+    index: true
+  },
   reason: {
     type: String,
     required: true,
@@ -79,8 +84,8 @@ expenseSchema.index({ category: 1, date: -1 });
 expenseSchema.index({ user: 1, date: -1 });
 
 // Static methods
-expenseSchema.statics.getTotalExpenses = async function(startDate, endDate) {
-  const match = {};
+expenseSchema.statics.getTotalExpenses = async function(startDate, endDate, extraMatch = {}) {
+  const match = { ...extraMatch };
   if (startDate || endDate) {
     match.date = {};
     if (startDate) match.date.$gte = startDate;
@@ -95,8 +100,8 @@ expenseSchema.statics.getTotalExpenses = async function(startDate, endDate) {
   return result.length > 0 ? result[0].total : 0;
 };
 
-expenseSchema.statics.getExpensesByCategory = async function(startDate, endDate) {
-  const match = {};
+expenseSchema.statics.getExpensesByCategory = async function(startDate, endDate, extraMatch = {}) {
+  const match = { ...extraMatch };
   if (startDate || endDate) {
     match.date = {};
     if (startDate) match.date.$gte = startDate;
@@ -110,8 +115,8 @@ expenseSchema.statics.getExpensesByCategory = async function(startDate, endDate)
   ]);
 };
 
-expenseSchema.statics.getRecentExpenses = async function(limit = 10) {
-  return await this.find()
+expenseSchema.statics.getRecentExpenses = async function(limit = 10, extraMatch = {}) {
+  return await this.find(extraMatch)
     .populate('user', 'name email')
     .sort({ date: -1 })
     .limit(limit);

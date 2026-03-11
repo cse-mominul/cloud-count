@@ -4,6 +4,7 @@ const Product = require("../models/Product");
 const Customer = require("../models/Customer");
 const Expense = require("../models/Expense");
 const { auth, requireRole } = require("../middleware/auth");
+const { resolveVendorContext, vendorFilter } = require("../middleware/vendorContext");
 
 const router = express.Router();
 
@@ -37,21 +38,21 @@ const getDateRange = (filter) => {
 };
 
 // Sales Report
-router.get("/sales", auth, async (req, res) => {
+router.get("/sales", auth, resolveVendorContext, async (req, res) => {
   try {
     const { period, startDate, endDate } = req.query;
-    let dateQuery = {};
+    const invoiceQuery = vendorFilter(req, {});
     
     if (period && period !== 'custom') {
-      dateQuery = getDateRange(period);
+      Object.assign(invoiceQuery, getDateRange(period));
     } else if (startDate && endDate) {
-      dateQuery = {
+      invoiceQuery.issuedAt = {
         $gte: new Date(startDate),
         $lte: new Date(endDate)
       };
     }
 
-    const invoices = await Invoice.find({ ...dateQuery })
+    const invoices = await Invoice.find(invoiceQuery)
       .populate("customer", "name")
       .sort({ issuedAt: -1 });
 
@@ -99,9 +100,9 @@ router.get("/sales", auth, async (req, res) => {
 });
 
 // Stock Report
-router.get("/stock", auth, async (req, res) => {
+router.get("/stock", auth, resolveVendorContext, async (req, res) => {
   try {
-    const products = await Product.find().sort({ name: 1 });
+    const products = await Product.find(vendorFilter(req, {})).sort({ name: 1 });
     
     const totalItems = products.length;
     const totalStockValue = products.reduce((sum, product) => {
@@ -154,7 +155,7 @@ router.get("/stock", auth, async (req, res) => {
 });
 
 // Profit/Loss Statement
-router.get("/profit-loss", auth, async (req, res) => {
+router.get("/profit-loss", auth, resolveVendorContext, async (req, res) => {
   try {
     const { period, startDate, endDate, page = 1, limit = 10 } = req.query;
     console.log('Profit-Loss Request Params:', { period, startDate, endDate, page, limit });
@@ -182,6 +183,8 @@ router.get("/profit-loss", auth, async (req, res) => {
       // Default: exclude cancelled invoices
       dateQuery = { status: { $ne: 'cancelled' } };
     }
+
+    Object.assign(dateQuery, vendorFilter(req, {}));
 
     console.log('Date Query:', dateQuery);
 
@@ -218,12 +221,12 @@ router.get("/profit-loss", auth, async (req, res) => {
     try {
       const expenseAgg = await Expense.aggregate([
         {
-          $match: {
+          $match: vendorFilter(req, {
             status: 'approved',
             ...(start && end ? {
               date: { $gte: start, $lte: end }
             } : {})
-          }
+          })
         },
         {
           $group: {
@@ -251,9 +254,11 @@ router.get("/profit-loss", auth, async (req, res) => {
       const monthStart = new Date(date.getFullYear(), date.getMonth(), 1);
       const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0);
 
-      const monthInvoices = await Invoice.find({
-        issuedAt: { $gte: monthStart, $lte: monthEnd }
-      });
+      const monthInvoices = await Invoice.find(
+        vendorFilter(req, {
+          issuedAt: { $gte: monthStart, $lte: monthEnd }
+        })
+      );
 
       const monthSales = monthInvoices.reduce((sum, inv) => sum + (inv.totalAmount || 0), 0);
       const monthCost = monthInvoices.reduce((sum, inv) => sum + (inv.totalCost || 0), 0);
@@ -304,7 +309,7 @@ router.get("/profit-loss", auth, async (req, res) => {
 });
 
 // Expense Report (placeholder for now)
-router.get("/expenses", auth, async (req, res) => {
+router.get("/expenses", auth, resolveVendorContext, async (req, res) => {
   try {
     const { period, startDate, endDate } = req.query;
     

@@ -4,13 +4,37 @@ const Invoice = require("../models/Invoice");
 const Customer = require("../models/Customer");
 const Activity = require("../models/Activity");
 const Expense = require("../models/Expense");
+const User = require("../models/User");
 const { auth } = require("../middleware/auth");
+const { resolveVendorContext, vendorFilter } = require("../middleware/vendorContext");
 
 const router = express.Router();
 
 // Dashboard stats: total stock, low stock alerts, profit/loss, category breakdown, recent activity
-router.get("/dashboard", auth, async (req, res) => {
+router.get("/dashboard", auth, resolveVendorContext, async (req, res) => {
   try {
+    const productMatch = vendorFilter(req, {});
+    const invoiceMatch = vendorFilter(req, {});
+    const customerMatch = vendorFilter(req, {});
+    const expenseMatch = vendorFilter(req, {});
+    const lowStockMatch = vendorFilter(req, {
+      stock: { $lte: 5 },
+      isActive: true
+    });
+
+    let recentActivityPromise;
+    if (req.user?.role === "super_admin" && !req.vendorId) {
+      recentActivityPromise = Activity.getRecentActivities(5);
+    } else {
+      recentActivityPromise = User.find(vendorFilter(req, {})).select("_id").then((users) => {
+        const userIds = users.map((u) => u._id);
+        return Activity.find({ user: { $in: userIds } })
+          .populate("user", "name email")
+          .sort({ createdAt: -1 })
+          .limit(5);
+      });
+    }
+
     const [
       totalStockAgg,
       inventoryCostAgg,
@@ -24,9 +48,11 @@ router.get("/dashboard", auth, async (req, res) => {
       totalExpensesAgg  // CRITICAL: Add total expenses aggregation
     ] = await Promise.all([
       Product.aggregate([
+        { $match: productMatch },
         { $group: { _id: null, totalStock: { $sum: "$stock" } } }
       ]),
       Product.aggregate([
+        { $match: productMatch },
         { 
           $group: { 
             _id: null, 
@@ -35,6 +61,7 @@ router.get("/dashboard", auth, async (req, res) => {
         }
       ]),
       Product.aggregate([
+        { $match: productMatch },
         {
           $group: {
             _id: { $ifNull: ["$category", "Uncategorized"] },
@@ -43,11 +70,9 @@ router.get("/dashboard", auth, async (req, res) => {
         },
         { $sort: { totalStock: -1 } }
       ]),
-      Product.find({
-        stock: { $lte: 5 },
-        isActive: true
-      }).select("name stock lowStockThreshold"),
+      Product.find(lowStockMatch).select("name stock lowStockThreshold"),
       Invoice.aggregate([
+        { $match: invoiceMatch },
         {
           $group: {
             _id: null,
@@ -60,6 +85,7 @@ router.get("/dashboard", auth, async (req, res) => {
       // CRITICAL: Calculate total customer dues by summing all customer.totalDue fields
       // This ensures consistency with payment updates which modify customer.totalDue
       Customer.aggregate([
+        { $match: customerMatch },
         {
           $group: {
             _id: null,
@@ -67,11 +93,12 @@ router.get("/dashboard", auth, async (req, res) => {
           }
         }
       ]),
-      Activity.getRecentActivities(5),
+      recentActivityPromise,
       // Get monthly revenue for last 6 months using compatible date aggregation
       Invoice.aggregate([
         {
           $match: {
+            ...invoiceMatch,
             createdAt: { $gte: new Date(Date.now() - 6 * 30 * 24 * 60 * 60 * 1000) }
           }
         },
@@ -92,6 +119,7 @@ router.get("/dashboard", auth, async (req, res) => {
       Expense.aggregate([
         {
           $match: {
+            ...expenseMatch,
             date: { $gte: new Date(Date.now() - 6 * 30 * 24 * 60 * 60 * 1000) },
             status: 'approved'
           }
@@ -110,9 +138,7 @@ router.get("/dashboard", auth, async (req, res) => {
       // CRITICAL: Get TOTAL expenses for profit calculation
       Expense.aggregate([
         {
-          $match: {
-            status: 'approved'
-          }
+          $match: vendorFilter(req, { status: 'approved' })
         },
         {
           $group: {

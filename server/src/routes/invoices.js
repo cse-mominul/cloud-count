@@ -9,16 +9,17 @@ const Customer = require("../models/Customer");
 const Activity = require("../models/Activity");
 const Settings = require("../models/Settings");
 const { auth, requireRole } = require("../middleware/auth");
+const { resolveVendorContext, vendorFilter } = require("../middleware/vendorContext");
 
 const router = express.Router();
 
 const SERIAL_CATEGORIES = ["Mobile", "Electronics"];
 
 // List invoices (optionally filter by customer or search)
-router.get("/", auth, async (req, res) => {
+router.get("/", auth, resolveVendorContext, async (req, res) => {
   try {
     const { customerId, search, limit, skip, startDate, endDate } = req.query;
-    const query = {};
+    const query = vendorFilter(req, {});
     if (customerId) {
       query.customer = customerId;
     }
@@ -74,8 +75,12 @@ router.get("/", auth, async (req, res) => {
 });
 
 // Create invoice (and update stock + customer due) - All authenticated users can create sales
-router.post("/", auth, async (req, res) => {
+router.post("/", auth, resolveVendorContext, async (req, res) => {
   try {
+    if (!req.vendorId) {
+      return res.status(400).json({ message: "Vendor context is required to create invoices" });
+    }
+
     const {
       customerId,
       items,
@@ -98,7 +103,7 @@ router.post("/", auth, async (req, res) => {
     const invoiceItems = [];
 
     for (const item of items) {
-      const product = await Product.findById(item.productId);
+      const product = await Product.findOne(vendorFilter(req, { _id: item.productId }));
       if (!product) {
         return res.status(400).json({ message: `Product not found: ${item.productId}` });
       }
@@ -198,6 +203,7 @@ router.post("/", auth, async (req, res) => {
     await customer.save();
 
     const invoice = await Invoice.create({
+      vendorId: req.vendorId,
       customer: customer._id,
       items: invoiceItems,
       discountType: discountTypeNorm,
@@ -243,10 +249,10 @@ router.post("/", auth, async (req, res) => {
 });
 
 // Get single invoice
-router.get("/:id", auth, async (req, res) => {
+router.get("/:id", auth, resolveVendorContext, async (req, res) => {
   try {
     const { id } = req.params;
-    const invoice = await Invoice.findById(id).populate("customer", "name email phone address");
+    const invoice = await Invoice.findOne(vendorFilter(req, { _id: id })).populate("customer", "name email phone address");
     if (!invoice) {
       return res.status(404).json({ message: "Invoice not found" });
     }
@@ -258,11 +264,11 @@ router.get("/:id", auth, async (req, res) => {
 });
 
 // Update invoice (paidAmount, notes) and sync customer totalDue
-router.patch("/:id", auth, async (req, res) => {
+router.patch("/:id", auth, resolveVendorContext, async (req, res) => {
   try {
     const { id } = req.params;
     const { paidAmount, notes } = req.body;
-    const invoice = await Invoice.findById(id);
+    const invoice = await Invoice.findOne(vendorFilter(req, { _id: id }));
     if (!invoice) {
       return res.status(404).json({ message: "Invoice not found" });
     }
@@ -292,7 +298,7 @@ router.patch("/:id", auth, async (req, res) => {
       await customer.save();
     }
 
-    const populated = await Invoice.findById(id).populate(
+    const populated = await Invoice.findOne(vendorFilter(req, { _id: id })).populate(
       "customer",
       "name email phone"
     );
@@ -304,10 +310,10 @@ router.patch("/:id", auth, async (req, res) => {
 });
 
 // Generate PDF for invoice
-router.get("/:id/pdf", auth, async (req, res) => {
+router.get("/:id/pdf", auth, resolveVendorContext, async (req, res) => {
   try {
     const { id } = req.params;
-    const invoice = await Invoice.findById(id).populate("customer", "name email phone address");
+    const invoice = await Invoice.findOne(vendorFilter(req, { _id: id })).populate("customer", "name email phone address");
     if (!invoice) {
       return res.status(404).json({ message: "Invoice not found" });
     }
@@ -430,12 +436,12 @@ router.get("/:id/pdf", auth, async (req, res) => {
 });
 
 // Delete invoice - Manager+ can delete, Staff can only view
-router.delete("/:id", auth, requireRole("admin", "super_admin", "manager"), async (req, res) => {
+router.delete("/:id", auth, resolveVendorContext, requireRole("admin", "super_admin", "manager"), async (req, res) => {
   try {
     const { id } = req.params;
     
     // Find the invoice
-    const invoice = await Invoice.findById(id).populate('customer');
+    const invoice = await Invoice.findOne(vendorFilter(req, { _id: id })).populate('customer');
     if (!invoice) {
       return res.status(404).json({ message: "Invoice not found" });
     }
@@ -449,7 +455,7 @@ router.delete("/:id", auth, requireRole("admin", "super_admin", "manager"), asyn
     try {
       // 1. Restore stock quantities for all items
       for (const item of invoice.items) {
-        const product = await Product.findById(item.product);
+        const product = await Product.findOne(vendorFilter(req, { _id: item.product }));
         if (product) {
           const oldStock = product.stock;
           const quantityToAdd = item.quantity;
@@ -508,7 +514,7 @@ router.delete("/:id", auth, requireRole("admin", "super_admin", "manager"), asyn
       });
 
       // 4. Delete the invoice
-      await Invoice.findByIdAndDelete(id);
+      await Invoice.findOneAndDelete(vendorFilter(req, { _id: id }));
       
       // Commit the transaction
       await session.commitTransaction();

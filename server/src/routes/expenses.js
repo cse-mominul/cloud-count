@@ -2,6 +2,7 @@ const express = require("express");
 const Expense = require("../models/Expense");
 const Activity = require("../models/Activity");
 const { auth, requireRole, isAdmin } = require("../middleware/auth");
+const { resolveVendorContext, vendorFilter } = require("../middleware/vendorContext");
 
 const router = express.Router();
 
@@ -26,7 +27,7 @@ const logActivity = async (action, description, user, details = {}) => {
 };
 
 // Get all expenses with filters
-router.get("/", auth, async (req, res) => {
+router.get("/", auth, resolveVendorContext, async (req, res) => {
   try {
     const { 
       startDate, 
@@ -37,7 +38,7 @@ router.get("/", auth, async (req, res) => {
       limit = 20 
     } = req.query;
     
-    const query = {};
+    const query = vendorFilter(req, {});
     
     // Date range filter
     if (startDate || endDate) {
@@ -79,7 +80,7 @@ router.get("/", auth, async (req, res) => {
 });
 
 // Get expense statistics
-router.get("/stats", auth, async (req, res) => {
+router.get("/stats", auth, resolveVendorContext, async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
     
@@ -87,9 +88,9 @@ router.get("/stats", auth, async (req, res) => {
     const end = endDate ? new Date(endDate) : new Date();
     
     const [totalExpenses, expensesByCategory, recentExpenses] = await Promise.all([
-      Expense.getTotalExpenses(start, end),
-      Expense.getExpensesByCategory(start, end),
-      Expense.getRecentExpenses(5)
+      Expense.getTotalExpenses(start, end, vendorFilter(req, {})),
+      Expense.getExpensesByCategory(start, end, vendorFilter(req, {})),
+      Expense.getRecentExpenses(5, vendorFilter(req, {}))
     ]);
     
     return res.json({
@@ -104,7 +105,7 @@ router.get("/stats", auth, async (req, res) => {
 });
 
 // Create expense (admin, super_admin, manager)
-router.post("/", auth, requireRole("admin", "super_admin", "manager"), async (req, res) => {
+router.post("/", auth, resolveVendorContext, requireRole("admin", "super_admin", "manager"), async (req, res) => {
   try {
     const {
       reason,
@@ -115,7 +116,12 @@ router.post("/", auth, requireRole("admin", "super_admin", "manager"), async (re
       receipt
     } = req.body;
     
+    if (!req.vendorId) {
+      return res.status(400).json({ message: "Vendor context is required to create expenses" });
+    }
+
     const expense = new Expense({
+      vendorId: req.vendorId,
       reason,
       amount,
       category,
@@ -151,7 +157,7 @@ router.post("/", auth, requireRole("admin", "super_admin", "manager"), async (re
 });
 
 // Update expense (admin, super_admin only)
-router.put("/:id", auth, isAdmin, async (req, res) => {
+router.put("/:id", auth, resolveVendorContext, isAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const {
@@ -164,7 +170,7 @@ router.put("/:id", auth, isAdmin, async (req, res) => {
       status
     } = req.body;
     
-    const expense = await Expense.findById(id);
+    const expense = await Expense.findOne(vendorFilter(req, { _id: id }));
     if (!expense) {
       return res.status(404).json({ message: "Expense not found" });
     }
@@ -210,11 +216,11 @@ router.put("/:id", auth, isAdmin, async (req, res) => {
 });
 
 // Delete expense (admin, super_admin only)
-router.delete("/:id", auth, isAdmin, async (req, res) => {
+router.delete("/:id", auth, resolveVendorContext, isAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     
-    const expense = await Expense.findByIdAndDelete(id);
+    const expense = await Expense.findOneAndDelete(vendorFilter(req, { _id: id }));
     if (!expense) {
       return res.status(404).json({ message: "Expense not found" });
     }

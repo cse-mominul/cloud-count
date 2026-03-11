@@ -2,6 +2,11 @@ const mongoose = require("mongoose");
 
 const userSchema = new mongoose.Schema(
   {
+    vendorId: {
+      type: mongoose.Schema.Types.ObjectId,
+      index: true,
+      default: null
+    },
     name: {
       type: String,
       required: true,
@@ -10,7 +15,6 @@ const userSchema = new mongoose.Schema(
     email: {
       type: String,
       required: true,
-      unique: true,
       lowercase: true,
       trim: true
     },
@@ -34,6 +38,8 @@ const userSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+userSchema.index({ vendorId: 1, email: 1 }, { unique: true, sparse: true });
 
 module.exports = mongoose.model("User", userSchema);
 

@@ -2,6 +2,11 @@ const mongoose = require("mongoose");
 
 const productSchema = new mongoose.Schema(
   {
+    vendorId: {
+      type: mongoose.Schema.Types.ObjectId,
+      required: true,
+      index: true
+    },
     name: {
       type: String,
       required: true,
@@ -10,7 +15,6 @@ const productSchema = new mongoose.Schema(
     sku: {
       type: String,
       trim: true,
-      unique: true,
       sparse: true
     },
     category: {
@@ -55,6 +59,8 @@ const productSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+productSchema.index({ vendorId: 1, sku: 1 }, { unique: true, sparse: true });
 
 module.exports = mongoose.model("Product", productSchema);
 
