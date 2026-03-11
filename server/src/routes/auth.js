@@ -91,8 +91,12 @@ router.post("/forgot-password", async (req, res) => {
       resetOtpExpire: otpExpire
     });
 
+    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+      return res.status(500).json({ message: "Email service is not configured" });
+    }
+
     // Send email
-    const transporter = nodemailer.createTransporter({
+    const transporter = nodemailer.createTransport({
       service: "gmail",
       auth: {
         user: process.env.EMAIL_USER,
