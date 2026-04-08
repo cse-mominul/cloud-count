@@ -37,6 +37,7 @@ const userRoutes = require("./routes/users");
 const settingsRoutes = require("./routes/settings");
 const expenseRoutes = require("./routes/expenses");
 const activityRoutes = require("./routes/activities");
+const adminVendorsRoutes = require("./routes/adminVendors");
 const uploadRoutes = require("./routes/upload");
 const reportsRoutes = require("./routes/reports");
 
@@ -68,6 +69,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/expenses", expenseRoutes);
 app.use("/api/activities", activityRoutes);
+app.use("/api/admin/vendors", adminVendorsRoutes);
 app.use("/api/upload", uploadRoutes);
 app.use("/api/reports", reportsRoutes);
 

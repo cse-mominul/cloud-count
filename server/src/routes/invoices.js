@@ -93,6 +93,15 @@ router.post("/", auth, resolveVendorContext, async (req, res) => {
       return res.status(400).json({ message: "Customer and at least one item are required" });
     }
 
+    if (!mongoose.Types.ObjectId.isValid(customerId)) {
+      return res.status(400).json({ message: "Invalid customer ID" });
+    }
+
+    const paidAmountNum = Number(paidAmount);
+    if (!Number.isFinite(paidAmountNum) || paidAmountNum < 0) {
+      return res.status(400).json({ message: "Invalid paid amount" });
+    }
+
     const customer = await Customer.findById(customerId);
     if (!customer) {
       return res.status(404).json({ message: "Customer not found" });
@@ -103,6 +112,10 @@ router.post("/", auth, resolveVendorContext, async (req, res) => {
     const invoiceItems = [];
 
     for (const item of items) {
+      if (!item.productId || !mongoose.Types.ObjectId.isValid(item.productId)) {
+        return res.status(400).json({ message: "Invalid product ID in items" });
+      }
+
       const product = await Product.findOne(vendorFilter(req, { _id: item.productId }));
       if (!product) {
         return res.status(400).json({ message: `Product not found: ${item.productId}` });
@@ -147,7 +160,12 @@ router.post("/", auth, resolveVendorContext, async (req, res) => {
         });
       }
       const salePrice = unitPriceRaw;
-      const costPrice = product.costPrice;
+      const costPrice = Number(product.costPrice);
+      if (!Number.isFinite(costPrice) || costPrice < 0) {
+        return res.status(400).json({
+          message: `Invalid cost price for ${product.name}`
+        });
+      }
       const lineTotal = salePrice * quantity;
 
       subtotal += lineTotal;
@@ -164,14 +182,25 @@ router.post("/", auth, resolveVendorContext, async (req, res) => {
       });
 
       if (isSerialCategory) {
-        product.serialNumbers = (product.serialNumbers || []).filter(
+        const updatedSerialNumbers = (product.serialNumbers || []).filter(
           (s) => s !== serialNumber
         );
-        product.stock = product.serialNumbers.length;
+        const updatedStock = updatedSerialNumbers.length;
+        await Product.updateOne(
+          { _id: product._id },
+          {
+            $set: {
+              serialNumbers: updatedSerialNumbers,
+              stock: updatedStock
+            }
+          }
+        );
       } else {
-        product.stock -= quantity;
+        await Product.updateOne(
+          { _id: product._id },
+          { $inc: { stock: -quantity } }
+        );
       }
-      await product.save();
     }
 
     const discountTypeNorm =
@@ -179,6 +208,9 @@ router.post("/", auth, resolveVendorContext, async (req, res) => {
         ? discountType
         : "flat";
     const discountValueNum = Number(discountValue) || 0;
+    if (discountValueNum < 0) {
+      return res.status(400).json({ message: "Discount value cannot be negative" });
+    }
     let discountAmount = 0;
     if (discountValueNum > 0 && subtotal > 0) {
       if (discountTypeNorm === "percent") {
@@ -194,13 +226,15 @@ router.post("/", auth, resolveVendorContext, async (req, res) => {
     const totalAmount = subtotal - discountAmount;
 
     const profit = totalAmount - totalCost;
-    const dueAmount = Math.max(totalAmount - paidAmount, 0);
+    const dueAmount = Math.max(totalAmount - paidAmountNum, 0);
     const status =
-      dueAmount === 0 ? "paid" : paidAmount > 0 ? "partial" : "unpaid";
+      dueAmount === 0 ? "paid" : paidAmountNum > 0 ? "partial" : "unpaid";
 
     // update customer due
-    customer.totalDue += dueAmount;
-    await customer.save();
+    await Customer.updateOne(
+      { _id: customer._id },
+      { $inc: { totalDue: dueAmount } }
+    );
 
     const invoice = await Invoice.create({
       vendorId: req.vendorId,
@@ -212,7 +246,7 @@ router.post("/", auth, resolveVendorContext, async (req, res) => {
       totalAmount,
       totalCost,
       profit,
-      paidAmount,
+      paidAmount: paidAmountNum,
       dueAmount,
       status,
       notes
@@ -220,31 +254,35 @@ router.post("/", auth, resolveVendorContext, async (req, res) => {
 
     const populated = await invoice.populate("customer", "name email phone");
 
-    // Log invoice creation activity
-    await Activity.logActivity({
-      action: 'invoice_created',
-      description: `Created new invoice #${invoice._id.toString().slice(-6)} for ${customer.name}`,
-      details: { 
+    // Keep invoice creation successful even if activity logging fails
+    try {
+      await Activity.logActivity({
+        action: 'invoice_created',
+        description: `Created new invoice #${invoice._id.toString().slice(-6)} for ${customer.name}`,
+        details: {
+          targetId: invoice._id,
+          invoiceId: invoice._id,
+          customerId: customer._id,
+          customerName: customer.name,
+          totalAmount,
+          itemCount: items.length,
+          status
+        },
+        user: req.user.id,
+        userName: req.user.name || 'Unknown User',
+        userRole: req.user.role || 'admin',
         targetId: invoice._id,
-        invoiceId: invoice._id,
-        customerId: customer._id,
-        customerName: customer.name,
-        totalAmount,
-        itemCount: items.length,
-        status
-      },
-      user: req.user.id,
-      userName: req.user.name,
-      userRole: req.user.role,
-      targetId: invoice._id,
-      targetType: 'Invoice',
-      severity: 'medium'
-    });
+        targetType: 'Invoice',
+        severity: 'medium'
+      });
+    } catch (logErr) {
+      console.error('Failed to write activity log for invoice creation:', logErr);
+    }
 
     return res.status(201).json(populated);
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ message: "Failed to create invoice" });
+    return res.status(500).json({ message: err?.message || "Failed to create invoice" });
   }
 });
 

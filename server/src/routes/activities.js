@@ -176,6 +176,67 @@ router.get("/by-action/:action", auth, async (req, res) => {
   }
 });
 
+// Bulk delete activities (admin, super_admin only)
+router.delete("/bulk", auth, isAdmin, async (req, res) => {
+  try {
+    const { ids, olderThan } = req.body || {};
+    
+    let deletedCount = 0;
+    
+    if (Array.isArray(ids) && ids.length > 0) {
+      const invalidIds = ids.filter((id) => !mongoose.Types.ObjectId.isValid(id));
+      if (invalidIds.length > 0) {
+        return res.status(400).json({ message: "One or more activity IDs are invalid" });
+      }
+
+      // Delete specific activities by IDs
+      const result = await Activity.deleteMany({ _id: { $in: ids } });
+      deletedCount = result.deletedCount;
+    } else if (olderThan) {
+      const parsedDate = new Date(olderThan);
+      if (Number.isNaN(parsedDate.getTime())) {
+        return res.status(400).json({ message: "Invalid 'olderThan' date" });
+      }
+
+      // Delete activities older than specified date
+      const result = await Activity.deleteMany({ 
+        createdAt: { $lt: parsedDate }
+      });
+      deletedCount = result.deletedCount;
+    } else {
+      return res.status(400).json({ message: "Either 'ids' or 'olderThan' must be provided" });
+    }
+    
+    // Do not fail deletion if activity logging fails
+    try {
+      await Activity.logActivity({
+        action: 'activity_deleted',
+        description: `Bulk deleted ${deletedCount} activity logs`,
+        details: {
+          deletedCount,
+          criteria: ids ? 'specific_ids' : 'older_than',
+          ipAddress: req.ip,
+          userAgent: req.get('User-Agent')
+        },
+        user: req.user.id,
+        userName: req.user.name,
+        userRole: req.user.role,
+        severity: 'high'
+      });
+    } catch (logErr) {
+      console.error('Failed to write activity log for bulk delete:', logErr);
+    }
+    
+    return res.json({ 
+      message: "Activities deleted successfully",
+      deletedCount 
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "Failed to delete activities" });
+  }
+});
+
 // Delete activity (admin, super_admin only)
 router.delete("/:id", auth, isAdmin, async (req, res) => {
   try {
@@ -205,53 +266,6 @@ router.delete("/:id", auth, isAdmin, async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ message: "Failed to delete activity" });
-  }
-});
-
-// Bulk delete activities (admin, super_admin only)
-router.delete("/bulk", auth, isAdmin, async (req, res) => {
-  try {
-    const { ids, olderThan } = req.body;
-    
-    let deletedCount = 0;
-    
-    if (ids && Array.isArray(ids)) {
-      // Delete specific activities by IDs
-      const result = await Activity.deleteMany({ _id: { $in: ids } });
-      deletedCount = result.deletedCount;
-    } else if (olderThan) {
-      // Delete activities older than specified date
-      const result = await Activity.deleteMany({ 
-        createdAt: { $lt: new Date(olderThan) }
-      });
-      deletedCount = result.deletedCount;
-    } else {
-      return res.status(400).json({ message: "Either 'ids' or 'olderThan' must be provided" });
-    }
-    
-    // Log the bulk deletion
-    await Activity.logActivity({
-      action: 'activity_deleted',
-      description: `Bulk deleted ${deletedCount} activity logs`,
-      details: {
-        deletedCount,
-        criteria: ids ? 'specific_ids' : 'older_than',
-        ipAddress: req.ip,
-        userAgent: req.get('User-Agent')
-      },
-      user: req.user.id,
-      userName: req.user.name,
-      userRole: req.user.role,
-      severity: 'high'
-    });
-    
-    return res.json({ 
-      message: "Activities deleted successfully",
-      deletedCount 
-    });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ message: "Failed to delete activities" });
   }
 });
 
