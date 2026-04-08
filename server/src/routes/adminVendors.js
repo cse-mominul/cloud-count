@@ -5,6 +5,7 @@ const path = require("path");
 const fs = require("fs");
 const Vendor = require("../models/Vendor");
 const User = require("../models/User");
+const Activity = require("../models/Activity");
 const { auth, requireRole } = require("../middleware/auth");
 
 const router = express.Router();
@@ -89,6 +90,26 @@ router.post("/", auth, requireRole("super_admin"), upload.single("logo"), async 
     vendor.ownerUser = ownerUser._id;
     await vendor.save();
 
+    await Activity.logActivity({
+      action: "vendor_created",
+      description: `Created vendor: ${vendor.companyName}`,
+      details: {
+        vendorId: vendor._id,
+        companyName: vendor.companyName,
+        businessEmail: vendor.businessEmail,
+        phoneNumber: vendor.phoneNumber,
+        status: vendor.status,
+        ipAddress: req.ip,
+        userAgent: req.get("User-Agent")
+      },
+      user: req.user.id,
+      userName: req.user.name,
+      userRole: req.user.role,
+      targetId: vendor._id,
+      targetType: "Vendor",
+      severity: "medium"
+    });
+
     return res.status(201).json({
       message: "Vendor created successfully",
       vendor
@@ -141,6 +162,26 @@ router.put("/:id", auth, requireRole("super_admin"), upload.single("logo"), asyn
       }
     }
 
+    await Activity.logActivity({
+      action: "vendor_updated",
+      description: `Updated vendor: ${vendor.companyName}`,
+      details: {
+        vendorId: vendor._id,
+        companyName: vendor.companyName,
+        businessEmail: vendor.businessEmail,
+        phoneNumber: vendor.phoneNumber,
+        status: vendor.status,
+        ipAddress: req.ip,
+        userAgent: req.get("User-Agent")
+      },
+      user: req.user.id,
+      userName: req.user.name,
+      userRole: req.user.role,
+      targetId: vendor._id,
+      targetType: "Vendor",
+      severity: "medium"
+    });
+
     return res.json({ message: "Vendor updated successfully", vendor });
   } catch (err) {
     console.error("Failed to update vendor:", err);
@@ -159,6 +200,26 @@ router.patch("/:id/deactivate", auth, requireRole("super_admin"), async (req, re
 
     vendor.status = "inactive";
     await vendor.save();
+
+    await Activity.logActivity({
+      action: "vendor_deactivated",
+      description: `Deactivated vendor: ${vendor.companyName}`,
+      details: {
+        vendorId: vendor._id,
+        companyName: vendor.companyName,
+        businessEmail: vendor.businessEmail,
+        phoneNumber: vendor.phoneNumber,
+        status: vendor.status,
+        ipAddress: req.ip,
+        userAgent: req.get("User-Agent")
+      },
+      user: req.user.id,
+      userName: req.user.name,
+      userRole: req.user.role,
+      targetId: vendor._id,
+      targetType: "Vendor",
+      severity: "medium"
+    });
 
     return res.json({ message: "Vendor deactivated successfully", vendor });
   } catch (err) {

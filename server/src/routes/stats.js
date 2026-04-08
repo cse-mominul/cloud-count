@@ -4,7 +4,6 @@ const Invoice = require("../models/Invoice");
 const Customer = require("../models/Customer");
 const Activity = require("../models/Activity");
 const Expense = require("../models/Expense");
-const User = require("../models/User");
 const { auth } = require("../middleware/auth");
 const { resolveVendorContext, vendorFilter } = require("../middleware/vendorContext");
 
@@ -21,19 +20,7 @@ router.get("/dashboard", auth, resolveVendorContext, async (req, res) => {
       stock: { $lte: 5 },
       isActive: true
     });
-
-    let recentActivityPromise;
-    if (req.user?.role === "super_admin" && !req.vendorId) {
-      recentActivityPromise = Activity.getRecentActivities(5);
-    } else {
-      recentActivityPromise = User.find(vendorFilter(req, {})).select("_id").then((users) => {
-        const userIds = users.map((u) => u._id);
-        return Activity.find({ user: { $in: userIds } })
-          .populate("user", "name email")
-          .sort({ createdAt: -1 })
-          .limit(5);
-      });
-    }
+    const recentActivityPromise = Activity.getRecentActivities(5);
 
     const [
       totalStockAgg,

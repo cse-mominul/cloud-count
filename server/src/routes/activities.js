@@ -1,4 +1,5 @@
 const express = require("express");
+const mongoose = require("mongoose");
 const Activity = require("../models/Activity");
 const { auth, requireRole, isAdmin } = require("../middleware/auth");
 
@@ -10,6 +11,7 @@ router.get("/", auth, async (req, res) => {
     const { 
       action, 
       user, 
+      targetType,
       severity, 
       startDate, 
       endDate, 
@@ -20,21 +22,34 @@ router.get("/", auth, async (req, res) => {
     
     const query = {};
     
-    // Text search filter (searches userName, action, and description)
+    // Text search filter (searches userName, action, description, and vendor details)
     if (search && search.trim()) {
       const searchRegex = new RegExp(search.trim(), 'i');
       query.$or = [
         { userName: searchRegex },
         { action: searchRegex },
-        { description: searchRegex }
+        { description: searchRegex },
+        { targetType: searchRegex },
+        { 'details.companyName': searchRegex },
+        { 'details.businessEmail': searchRegex }
       ];
     }
     
     // Action filter
     if (action) query.action = action;
+
+    // Target type filter
+    if (targetType) query.targetType = targetType;
     
     // User filter
-    if (user) query.user = user;
+    if (user) {
+      if (mongoose.Types.ObjectId.isValid(user)) {
+        query.user = user;
+      } else {
+        const userRegex = new RegExp(user.trim(), 'i');
+        query.userName = userRegex;
+      }
+    }
     
     // Severity filter
     if (severity) query.severity = severity;

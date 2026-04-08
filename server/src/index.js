@@ -39,7 +39,6 @@ const expenseRoutes = require("./routes/expenses");
 const activityRoutes = require("./routes/activities");
 const uploadRoutes = require("./routes/upload");
 const reportsRoutes = require("./routes/reports");
-const adminVendorsRoutes = require("./routes/adminVendors");
 
 const app = express();
 
@@ -71,7 +70,6 @@ app.use("/api/expenses", expenseRoutes);
 app.use("/api/activities", activityRoutes);
 app.use("/api/upload", uploadRoutes);
 app.use("/api/reports", reportsRoutes);
-app.use("/api/admin/vendors", adminVendorsRoutes);
 
 app.get("/", (req, res) => {
   res.json({ message: "Sohel Gadgets API is running" });

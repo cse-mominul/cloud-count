@@ -29,7 +29,7 @@ router.get("/", auth, resolveVendorContext, requireAdmin, async (req, res) => {
 // Create new user (admin/super_admin only)
 router.post("/", auth, resolveVendorContext, requireAdmin, async (req, res) => {
   try {
-    const { name, email, password, role, vendorId: requestedVendorId } = req.body;
+    const { name, email, password, role } = req.body;
 
     if (!name || !email || !password || !role) {
       return res.status(400).json({ message: "Name, email, password, and role are required" });
@@ -47,15 +47,7 @@ router.post("/", auth, resolveVendorContext, requireAdmin, async (req, res) => {
     }
 
     // Check if user already exists
-    const targetVendorId = req.user.role === "super_admin"
-      ? (requestedVendorId || req.vendorId || null)
-      : req.vendorId;
-
-    if (req.user.role !== "super_admin" && !targetVendorId) {
-      return res.status(400).json({ message: "Vendor context is required to create user" });
-    }
-
-    const existingUser = await User.findOne({ email, vendorId: targetVendorId });
+    const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(400).json({ message: "User with this email already exists" });
     }
@@ -63,7 +55,6 @@ router.post("/", auth, resolveVendorContext, requireAdmin, async (req, res) => {
     const passwordHash = await bcrypt.hash(password, 10);
 
     const user = await User.create({
-      vendorId: targetVendorId,
       name,
       email,
       passwordHash,
@@ -94,7 +85,6 @@ router.post("/", auth, resolveVendorContext, requireAdmin, async (req, res) => {
       message: "User created successfully",
       user: {
         id: user._id,
-        vendorId: user.vendorId,
         name: user.name,
         email: user.email,
         role: user.role,
@@ -139,7 +129,7 @@ router.put("/:id", auth, resolveVendorContext, requireAdmin, async (req, res) =>
     
     if (email) {
       // Check if email is already taken by another user
-      const existingUser = await User.findOne(vendorFilter(req, { email, _id: { $ne: id } }));
+      const existingUser = await User.findOne({ email, _id: { $ne: id } });
       if (existingUser) {
         return res.status(400).json({ message: "Email is already in use by another user" });
       }

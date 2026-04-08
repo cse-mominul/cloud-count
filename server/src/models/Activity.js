@@ -24,6 +24,9 @@ const activitySchema = new mongoose.Schema({
       'expense_created',
       'expense_updated',
       'expense_deleted',
+      'vendor_created',
+      'vendor_updated',
+      'vendor_deactivated',
       'payment_received',
       'settings_updated',
       'login',
@@ -68,7 +71,7 @@ const activitySchema = new mongoose.Schema({
   },
   targetType: {
     type: String,
-    enum: ['User', 'Product', 'Category', 'Customer', 'Invoice', 'Expense', 'Settings'],
+    enum: ['User', 'Product', 'Category', 'Customer', 'Invoice', 'Expense', 'Vendor', 'Settings'],
     default: null
   },
   severity: {
@@ -196,6 +199,9 @@ activitySchema.methods.getFormattedDescription = function() {
     'expense_created': `Added new expense of ৳${details.amount || 0} for ${details.category || 'Unknown'}`,
     'expense_updated': `Updated expense: ${details.reason || 'Unknown'}`,
     'expense_deleted': `Deleted expense: ${details.reason || 'Unknown'}`,
+    'vendor_created': `Created vendor: ${details.companyName || 'Unknown'}`,
+    'vendor_updated': `Updated vendor: ${details.companyName || 'Unknown'}`,
+    'vendor_deactivated': `Deactivated vendor: ${details.companyName || 'Unknown'}`,
     'payment_received': `Received payment of ৳${details.amount || 0} from ${details.customerName || 'Unknown'}`,
     'settings_updated': 'Updated system settings',
     'login': `User ${this.userName} logged in`,

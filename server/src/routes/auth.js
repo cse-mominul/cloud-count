@@ -2,7 +2,6 @@ const express = require("express");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
-const mongoose = require("mongoose");
 const User = require("../models/User");
 const Settings = require("../models/Settings");
 const { testTelegramConnection } = require("../utils/telegramNotifications");
@@ -37,22 +36,11 @@ const createPasswordResetTransporter = () => {
 router.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
-    const vendorHeader = typeof req.headers["x-vendor-id"] === "string"
-      ? req.headers["x-vendor-id"].trim()
-      : "";
     if (!email || !password) {
       return res.status(400).json({ message: "Email and password are required" });
     }
 
-    if (vendorHeader && !mongoose.Types.ObjectId.isValid(vendorHeader)) {
-      return res.status(400).json({ message: "Invalid x-vendor-id header" });
-    }
-
-    const userQuery = { email };
-    if (vendorHeader) {
-      userQuery.vendorId = vendorHeader;
-    }
-    const user = await User.findOne(userQuery);
+    const user = await User.findOne({ email });
     if (!user) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
@@ -67,8 +55,7 @@ router.post("/login", async (req, res) => {
         id: user._id,
         name: user.name,
         email: user.email,
-        role: user.role,
-        vendorId: user.vendorId || null
+        role: user.role
       },
       process.env.JWT_SECRET,
       { expiresIn: "8h" }
@@ -80,8 +67,7 @@ router.post("/login", async (req, res) => {
         id: user._id,
         name: user.name,
         email: user.email,
-        role: user.role,
-        vendorId: user.vendorId || null
+        role: user.role
       }
     });
   } catch (err) {
@@ -108,17 +94,11 @@ router.get("/me", auth, async (req, res) => {
 router.post("/forgot-password", async (req, res) => {
   try {
     const { email } = req.body;
-    const vendorHeader = typeof req.headers["x-vendor-id"] === "string"
-      ? req.headers["x-vendor-id"].trim()
-      : "";
     if (!email) {
       return res.status(400).json({ message: "Email is required" });
     }
-    if (vendorHeader && !mongoose.Types.ObjectId.isValid(vendorHeader)) {
-      return res.status(400).json({ message: "Invalid x-vendor-id header" });
-    }
 
-    const user = await User.findOne(vendorHeader ? { email, vendorId: vendorHeader } : { email });
+    const user = await User.findOne({ email });
     if (!user) {
       // Don't reveal if email exists or not for security
       return res.json({ message: "If an account with that email exists, a password reset OTP has been sent." });
@@ -175,21 +155,15 @@ router.post("/forgot-password", async (req, res) => {
 router.post("/reset-password", async (req, res) => {
   try {
     const { email, otp, newPassword } = req.body;
-    const vendorHeader = typeof req.headers["x-vendor-id"] === "string"
-      ? req.headers["x-vendor-id"].trim()
-      : "";
     if (!email || !otp || !newPassword) {
       return res.status(400).json({ message: "Email, OTP, and new password are required" });
-    }
-    if (vendorHeader && !mongoose.Types.ObjectId.isValid(vendorHeader)) {
-      return res.status(400).json({ message: "Invalid x-vendor-id header" });
     }
 
     if (newPassword.length < 6) {
       return res.status(400).json({ message: "Password must be at least 6 characters long" });
     }
 
-    const user = await User.findOne(vendorHeader ? { email, vendorId: vendorHeader } : { email });
+    const user = await User.findOne({ email });
     if (!user) {
       return res.status(400).json({ message: "Invalid email or OTP" });
     }
